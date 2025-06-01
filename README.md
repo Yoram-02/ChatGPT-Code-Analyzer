@@ -2,10 +2,6 @@
 
 Une application GUI puissante pour l'analyse automatisée de code source utilisant ChatGPT. Analysez vos projets locaux ou GitHub avec des prompts personnalisés et obtenez des rapports détaillés en Markdown.
 
-![Python](https://img.shields.io/badge/python-v3.7+-blue.svg)
-![Platform](https://img.shields.io/badge/platform-windows%20%7C%20macOS%20%7C%20linux-lightgrey.svg)
-![License](https://img.shields.io/badge/license-MIT-green.svg)
-
 ## 🚀 Fonctionnalités
 
 - **Sources multiples** : Analysez des dépôts locaux ou clonez directement depuis GitHub
