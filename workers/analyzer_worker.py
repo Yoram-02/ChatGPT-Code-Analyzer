@@ -10,13 +10,14 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import WebDriverException, TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
 from utils.file_utils import load_json_file, save_json_file
-from utils.browser_utils import setup_browser, is_browser_alive
+from utils.browser_utils import setup_browser, is_browser_alive, open_new_tab, switch_to_tab
 import tempfile
 import shutil
 import git
 from urllib.parse import urlparse
 from selenium.webdriver.common.keys import Keys
 from utils.markdown_utils import save_results_to_markdown, load_markdown_file, extract_results_from_markdown
+import html2text
 
 class AnalyzerWorker(QThread):
     update_progress = pyqtSignal(int, str)
@@ -31,6 +32,8 @@ class AnalyzerWorker(QThread):
         self.driver = None
         self.results = {}
         self.running = True
+        # self.chunk_size = 15000
+        self.max_chunk_size = 8000 
 
     def run(self):
         temp_dir = None
@@ -83,6 +86,8 @@ class AnalyzerWorker(QThread):
                 self.error.emit("Échec de l'initialisation du navigateur")
                 return
             
+            main_tab = self.driver.current_window_handle
+
             # Attendre la connexion de l'utilisateur si nécessaire
             if self.config.get('require_login', True):
                 self.wait_for_login()
@@ -105,7 +110,18 @@ class AnalyzerWorker(QThread):
 
                 content = self.read_file(file_path)
                 
-                result = self.send_to_chatgpt(file_path, content)
+                # Vérifier si le fichier est trop long pour être traité en une seule fois
+                if len(content) > self.max_chunk_size:
+                    self.update_progress.emit(progress, f"📑 Fichier long détecté : {file_path}. Traitement par chunks...")
+                    result = self.process_large_file(file_path, content, main_tab)
+                else:
+                    full_prompt = f"{self.config['prompt']} \n\n {file_path} \n\n {content}"
+                    result = self.send_to_chatgpt(file_path, full_prompt)
+                
+                # Assurez-vous que nous sommes de retour sur l'onglet principal
+                switch_to_tab(self.driver, main_tab)
+                
+                # result = self.process_file_in_chunks(file_path, content)
                 
                 self.results[file_path] = result
                 # Sauvegarder en Markdown après chaque fichier pour préserver les progrès
@@ -257,7 +273,7 @@ class AnalyzerWorker(QThread):
 
             if path.is_file():
                 # Exclusion des dossiers
-                if any(d in path.parts for d in {*self.config['ignored_folders'], *github_ignores}):
+                if not any(d in path.parts for d in {*self.config['relevant_folders'], *github_ignores}):
                     continue
                     
                 # Exclusion des extensions
@@ -269,6 +285,212 @@ class AnalyzerWorker(QThread):
                 files.append(file_path)
 
         return files
+    
+    
+    # def process_file_in_chunks(self, file_path, content):
+    #     """
+    #     Traite un fichier en l'envoyant par morceaux à ChatGPT si nécessaire
+        
+    #     Args:
+    #         file_path (str): Chemin du fichier en cours d'analyse
+    #         content (str): Contenu du fichier
+            
+    #     Returns:
+    #         str: Résultat de l'analyse
+    #     """
+    #     # Si le contenu est assez court, traitement normal
+    #     if len(content) <= self.chunk_size:
+    #         return self.send_to_chatgpt(file_path, content, is_chunk=False)
+        
+    #     # Sinon, on divise en chunks
+    #     chunks = self.split_content_into_chunks(content)
+    #     total_chunks = len(chunks)
+        
+    #     responses = []
+    #     for i, chunk in enumerate(chunks, 1):
+    #         if not self.running or not is_browser_alive(self.driver):
+    #             if not is_browser_alive(self.driver):
+    #                 self.browser_closed.emit()
+    #             return "Analyse interrompue"
+            
+    #         self.update_progress.emit(
+    #             -1,  # Valeur négative pour indiquer un progrès indéterminé
+    #             f"📄 Analyse de {file_path} - Morceau {i}/{total_chunks}..."
+    #         )
+            
+    #         # Premier chunk avec instructions initiales
+    #         if i == 1:
+    #             prompt = f"Ce fichier est trop long et sera envoyé en {total_chunks} parties. \n\n{file_path}  partie 1/{total_chunks} \n\n:\n\n{chunk}"
+    #         # Chunks intermédiaires
+    #         elif i < total_chunks:
+    #             prompt = f"Voici la suite du fichier\n\n  {file_path} (partie {i}/{total_chunks}):\n\n{chunk}"
+    #         # Dernier chunk avec demande de synthèse
+    #         else:
+    #             prompt = f"Voici la dernière partie du fichier \n\n{file_path} (partie {i}/{total_chunks}):\n\n{chunk}\n\nMaintenant que tu as reçu toutes les parties du fichier, veuillez fournir une analyse complète selon les instructions initiales en 4 lignes Maximum. \n\n{self.config['prompt']}"
+            
+    #         response = self.send_to_chatgpt_raw(prompt)
+    #         responses.append(response)
+            
+    #         # Petite pause entre les chunks pour ne pas surcharger l'API
+    #         time.sleep(5)
+        
+    #     # Si un seul chunk a été envoyé, on retourne directement la réponse
+    #     if len(responses) == 1:
+    #         return responses[0]
+        
+    #     # Sinon, on utilise la dernière réponse qui devrait contenir la synthèse complète
+    #     return responses[-1]
+
+    # def split_content_into_chunks(self, content):
+    #     """
+    #     Divise le contenu en morceaux de taille appropriée
+        
+    #     Args:
+    #         content (str): Contenu à diviser
+            
+    #     Returns:
+    #         list: Liste des chunks
+    #     """
+    #     chunks = []
+    #     # Diviser par lignes pour éviter de couper au milieu d'une ligne
+    #     lines = content.split('\n')
+        
+    #     current_chunk = ""
+    #     for line in lines:
+    #         # Si l'ajout de cette ligne ne dépasse pas la taille maximale, on l'ajoute
+    #         if len(current_chunk) + len(line) + 1 <= self.chunk_size:
+    #             if current_chunk:
+    #                 current_chunk += '\n'
+    #             current_chunk += line
+    #         else:
+    #             # Si la ligne est trop longue, on la divise
+    #             if not current_chunk:  # Si le chunk est vide, cette ligne est trop longue seule
+    #                 # Diviser la ligne en morceaux
+    #                 for i in range(0, len(line), self.chunk_size):
+    #                     chunks.append(line[i:i+self.chunk_size])
+    #             else:
+    #                 # Ajouter le chunk courant et commencer un nouveau avec cette ligne
+    #                 chunks.append(current_chunk)
+    #                 current_chunk = line
+        
+    #     # Ne pas oublier le dernier chunk
+    #     if current_chunk:
+    #         chunks.append(current_chunk)
+            
+    #     return chunks
+
+    # def send_to_chatgpt(self, filename, content, is_chunk=False):
+    #     """Version simplifiée qui utilise send_to_chatgpt_raw"""
+    #     if not is_chunk:
+    #         prompt = f"{self.config['prompt']} \n\n  {filename} \n\n {content[:self.chunk_size]}"
+    #     else:
+    #         prompt = content  # Le contenu est déjà formaté comme prompt
+        
+    #     return self.send_to_chatgpt_raw(prompt)
+
+    def process_large_file(self, file_path, content, main_tab):
+        """
+        Traite un fichier trop long en le divisant en chunks
+        
+        Args:
+            file_path (str): Chemin du fichier
+            content (str): Contenu du fichier
+            main_tab: Identifiant de l'onglet principal
+            
+        Returns:
+            str: Résumé complet du fichier
+        """
+        try:
+            # Ouvrir un nouvel onglet pour traiter ce fichier long
+            new_tab = open_new_tab(self.driver)
+            if not new_tab:
+                raise Exception("Impossible d'ouvrir un nouvel onglet")
+            time.sleep(5)
+            switch_to_tab(self.driver, new_tab)
+            
+            # Diviser le contenu en chunks
+            chunks = self.split_into_chunks(content)
+            total_chunks = len(chunks)
+            
+            self.update_progress.emit(-1, f"💬 Traitement du fichier en {total_chunks} parties...")
+            
+            # Envoyer chaque chunk à ChatGPT
+            for i, chunk in enumerate(chunks, 1):
+                if not self.running:
+                    raise Exception("Analyse interrompue par l'utilisateur")
+                
+                prompt = f"Partie {i}/{total_chunks} du fichier {file_path}. Analysez cette partie, mais ne donnez pas encore de conclusion générale:\n\n"
+                self.send_message_to_chatgpt(prompt + chunk)
+                
+                self.update_progress.emit(-1, f"💬 Chunk {i}/{total_chunks} envoyé...")
+                time.sleep(10)  # Attendre un peu entre chaque envoi
+            
+            # Demander à ChatGPT de résumer toutes les parties
+            summary_prompt = f"""Maintenant que vous avez analysé toutes les {total_chunks} parties du fichier {file_path}, 
+            veuillez fournir une analyse complète et un résumé global en suivant les instructions de départ.
+            \n\n {self.config['prompt']} """
+            
+            
+            self.update_progress.emit(-1, "📝 Demande de résumé final...")
+            summary = self.send_message_to_chatgpt(summary_prompt)
+            
+            # Retourner à l'onglet principal avant de continuer
+            switch_to_tab(self.driver, main_tab)
+            
+            # Fermez l'onglet temporaire (optionnel)
+            self.driver.switch_to.window(new_tab)
+            self.driver.close()
+            self.driver.switch_to.window(main_tab)
+            
+            return summary
+            
+        except Exception as e:
+            # En cas d'erreur, revenir à l'onglet principal
+            try:
+                switch_to_tab(self.driver, main_tab)
+            except:
+                pass
+            return f"Erreur lors du traitement du fichier long: {str(e)}"
+
+    def split_into_chunks(self, content):
+        """
+        Divise le contenu en chunks de taille appropriée
+        
+        Args:
+            content (str): Contenu à diviser
+            
+        Returns:
+            list: Liste des chunks
+        """
+        chunks = []
+        # Diviser le contenu en lignes puis regrouper en chunks
+        lines = content.split('\n')
+        current_chunk = []
+        current_size = 0
+        
+        for line in lines:
+            line_length = len(line) + 1  # +1 pour le saut de ligne
+            
+            # Si ajouter cette ligne dépasse la taille maximale, sauvegarder le chunk actuel
+            if current_size + line_length > self.max_chunk_size and current_chunk:
+                chunks.append('\n'.join(current_chunk))
+                current_chunk = []
+                current_size = 0
+            
+            # Si une seule ligne est plus grande que la taille du chunk, la diviser
+            if line_length > self.max_chunk_size:
+                # Diviser la ligne en morceaux de taille maximale
+                for i in range(0, len(line), self.max_chunk_size):
+                    chunks.append(line[i:i + self.max_chunk_size])
+            else:
+                current_chunk.append(line)
+                current_size += line_length
+        
+        # Ajouter le dernier chunk s'il n'est pas vide
+        if current_chunk:
+            chunks.append('\n'.join(current_chunk))
+            
+        return chunks
 
     def read_file(self, path):
         try:
@@ -281,13 +503,20 @@ class AnalyzerWorker(QThread):
             return f"Error reading file: {str(e)}"
 
     def send_to_chatgpt(self, filename, content):
+        """
+        Envoie un fichier complet à ChatGPT
+        """
+        prompt_complete = f"{self.config['prompt']} \n\n {filename} \n\n {content}"
+        return self.send_message_to_chatgpt(content)
+
+    def send_message_to_chatgpt(self, content):
         try:
             # Vérifier si le navigateur est toujours ouvert avant de continuer
             if not is_browser_alive(self.driver):
                 self.browser_closed.emit()
                 raise WebDriverException("Le navigateur a été fermé")
                 
-            prompt_complete = f"{self.config['prompt']} \n\n {content[:15000]}"  # Limit to 12k chars
+            prompt_complete = content # Limit to 12k chars
             wait = WebDriverWait(self.driver, 60)
             
             input_div = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.ProseMirror")))
@@ -333,29 +562,61 @@ class AnalyzerWorker(QThread):
             #         break  # Ça commence à taper
             #     time.sleep(0.5)     
             
+            # while True:
+            #     # Vérifier si le navigateur est toujours ouvert pendant l'attente
+            #     if not is_browser_alive(self.driver):
+            #         self.browser_closed.emit()
+            #         raise WebDriverException("Le navigateur a été fermé pendant la génération de la réponse")
+                    
+            #     time.sleep(2)
+            #     typing = self.driver.find_elements(By.CSS_SELECTOR, "div.streaming-animation")
+            #     thinking = self.driver.find_elements(By.CSS_SELECTOR, "div.result-thinking")
+                
+            #     if not typing or not thinking:
+            #         break
+
             while True:
                 # Vérifier si le navigateur est toujours ouvert pendant l'attente
-                if not is_browser_alive(self.driver):
-                    self.browser_closed.emit()
-                    raise WebDriverException("Le navigateur a été fermé pendant la génération de la réponse")
-                    
-                time.sleep(2)
-                typing = self.driver.find_elements(By.CSS_SELECTOR, "div.streaming-animation")
-                thinking = self.driver.find_elements(By.CSS_SELECTOR, "div.result-thinking")
-                
-                if not typing or not thinking:
-                    break
+                    if not is_browser_alive(self.driver):
+                        self.browser_closed.emit()
+                        raise WebDriverException("Le navigateur a été fermé pendant la génération de la réponse")
+                        
+                    time.sleep(2)
+                    typing = self.driver.find_elements(By.CSS_SELECTOR, '[data-testid="stop-button"]')
+                    if not typing:
+                        break
 
             time.sleep(10)
             blocks = self.driver.find_elements(By.CSS_SELECTOR, "div.markdown")
+            
+            # return blocks[-1].text if blocks else "No response received"
 
-            return blocks[-1].text if blocks else "No response received"
+            html_content = blocks[-1].get_attribute("outerHTML")if blocks else "No response received"
+
+            markdown_content = self.html_to_markdown(html_content)
+            
+            return markdown_content
+
         except WebDriverException as e:
             # Propager l'exception pour qu'elle soit gérée dans la méthode run()
             raise e
         except Exception as e:
             return f"Error analyzing file: {str(e)}"
-
+        
+    def html_to_markdown(self,html):
+        """
+        Convertit le contenu HTML en un format Markdown lisible en utilisant html2text.
+        
+        Args:
+            html (str): Le contenu HTML à convertir.
+            
+        Returns:
+            str: Le contenu converti en Markdown.
+        """
+        h = html2text.HTML2Text()
+        h.ignore_links = False  # Par défaut, html2text ignore les liens, on peut les activer si nécessaire
+        markdown = h.handle(html)
+        return markdown
 
 class GitProgress(git.RemoteProgress):
     """Helper pour afficher la progression du clonage GitHub"""

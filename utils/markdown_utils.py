@@ -50,9 +50,9 @@ def save_results_to_markdown(results, output_file):
                     f.write(f"### {file_name}\n\n")
                     f.write(f"**Chemin complet:** `{file_path}`\n\n")
                     f.write("**Analyse:**\n\n")
-                    f.write("```\n")
+                    f.write("...\n\n")
                     f.write(analysis_result)
-                    f.write("\n```\n\n")
+                    f.write("\n...\n\n")
                     f.write("---\n\n")
             
             # Pied de page
@@ -120,7 +120,7 @@ def extract_results_from_markdown(markdown_content):
                 continue
         
         # Détecter le début et la fin d'un bloc d'analyse
-        elif line == "```":
+        elif line == "...":
             in_analysis_block = not in_analysis_block
             # Ne pas ajouter les délimiteurs de bloc de code
             continue

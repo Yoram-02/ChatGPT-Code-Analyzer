@@ -133,7 +133,7 @@ class CodeAnalyzerGUI(QMainWindow):
         layout.addLayout(button_layout)
         
         # Set default values
-        self.prompt_edit.setPlainText("""Analyse les codes source en se concentrant sur plusieurs aspects clés :
+        self.prompt_edit.setPlainText("""Analyse le code source en se concentrant sur plusieurs aspects clés :
 
 1. Sécurité : Identifie toute vulnérabilité de sécurité (injections SQL, XSS, CSRF, RCE, SSRF, etc.), Détecte toute backdoor ou présence de code malveillant (exécution cachée, obfuscation, exfiltration de données, etc.), Vérifie les dépendances ou appel vers d'autre url externe.
 
@@ -274,7 +274,7 @@ Remarque important: Sois précis et propose des solutions concrètes pour chaque
                                 '.exe', '.dll', '.so', '.bin', '.class', '.jar',
                                 '.pdf', '.doc', '.docx', '.xls', '.xlsx',
                                 '.log'},
-            'ignored_folders': {'node_modules', '.git', '.vscode', '.idea', 'dist', 
+            'ignored_folders': {'node_modules', '.git', '.github','.vscode', '.idea', 'dist', 
                               'build', '__pycache__', '.next', 'out', 'coverage'},
             'require_login': self.require_login_checkbox.isChecked(),
             'relevant_extensions' : {
@@ -287,8 +287,12 @@ Remarque important: Sois précis et propose des solutions concrètes pour chaque
                     ".vue",
                     ".sh", ".bash",
                     ".lock", ".dockerfile"
-                }
-        }
+                },
+                'relevant_folders' : {
+                    "src",
+                },
+                "chunck_prompt": """Analyse ce fichier code source"""
+                    }
     
     def stop_analysis(self):
         if self.worker and self.worker.isRunning():
